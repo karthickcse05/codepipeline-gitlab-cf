@@ -111,7 +111,7 @@ Resources:
     Type: AWS::CodeBuild::Project
     Properties:
       Name: !Sub ${StackPrefix}-${Environment}-CodeBuildProject-cb
-      Description: Builds the auth stack
+      Description: Builds the code
       TimeoutInMinutes: 15
       ServiceRole: !GetAtt CodeBuildRole.Arn
       Artifacts:
@@ -129,7 +129,7 @@ Resources:
     Properties:
       Name: !Sub ${StackName}
       ArtifactStore:
-        Location: bacnet-sc
+        Location: codepipeline-bucket    // S3 bucket name
         Type: S3
       RoleArn: !GetAtt CodePipelineRole.Arn
       Stages:
