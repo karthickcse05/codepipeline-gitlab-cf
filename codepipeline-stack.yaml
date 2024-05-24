@@ -1,0 +1,175 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Code pipeline to build the sqs application"
+
+Parameters:
+  Environment:
+    Type: String
+    Description: The environment that the pipeline is deployed to
+    Default: sbx
+
+  StackPrefix:
+    Type: String
+    Description: The unique prefix following the environment name that the pipleine is deployed to
+    Default: test
+
+  StackName:
+    Type: String
+    Description: combination of [Environment]-[StackPrefix]-codepipeline
+    Default: sbx-test-codepipeline-may
+
+
+  CodeStarARN:
+    Type: String
+    Description: The arn of the code start connection
+    Default: arn:aws:codestar-connections:us-east-1:12345:host/gitlabtist-ff372e2b
+
+  
+
+Resources:
+  GitLabConnection:
+    Type: AWS::CodeStarConnections::Connection
+    Properties:
+      ConnectionName: my-gitlab-connection
+      #ProviderType: GitLabSelfManaged
+      HostArn: !Ref CodeStarARN 
+
+  
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${StackPrefix}-${Environment}-code-pipeline-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - "codepipeline.amazonaws.com"
+                - "cloudformation.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: "/"
+      Policies:
+        - PolicyName: Permissions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: "*"
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource:
+                  - !Sub "arn:aws:iam::${AWS::AccountId}:role/${StackPrefix}-${Environment}-cloudformation-role"
+  
+  CloudFormationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${StackPrefix}-${Environment}-cloudformation-role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - cloudformation.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: !Sub ${StackPrefix}-${Environment}-cloudformation-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: "*"
+                Resource: "*"
+  
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${StackPrefix}-${Environment}-code-build-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: ["sts:AssumeRole"]
+            Principal:
+              Service: ["codebuild.amazonaws.com"]
+      Path: /
+      Policies:
+        - PolicyName: Permissions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: "*"
+                Resource: "*"
+            
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub ${StackPrefix}-${Environment}-CodeBuildProject-cb
+      Description: Builds the auth stack
+      TimeoutInMinutes: 15
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:2.0
+      Source:
+        BuildSpec: buildspec.yaml
+        Type: CODEPIPELINE
+  
+  CodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub ${StackName}
+      ArtifactStore:
+        Location: bacnet-sc
+        Type: S3
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: SourceAction
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: '1'
+              Configuration:
+                ConnectionArn: !Ref GitLabConnection    // Existing Code star connection ARN
+                FullRepositoryId: my-namespace/my-repository
+                BranchName: main
+              OutputArtifacts:
+                - Name: SourceArtifact
+        - Name: Build
+          Actions:
+            - Name: build-cfn-lint
+              RunOrder: 1
+              InputArtifacts:
+                - Name: SourceArtifact
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: "1"
+                Provider: CodeBuild
+              Configuration:
+                ProjectName: !Ref CodeBuildProject
+        - Name: Deploy
+          Actions:
+            - Name: deploy-the-stack
+              RunOrder: 1
+              InputArtifacts:
+                - Name: SourceArtifact
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: "1"
+                Provider: CodeBuild
+              Configuration:
+                ProjectName: !Ref CodeBuildProject
